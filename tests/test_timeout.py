@@ -1,92 +1,91 @@
-import platform
-import signal
-import threading
-from typing import Callable, Optional, Any
+import time
 
-import decorator
+import pytest
+
+from pytest_better_timeout import TimeoutHelper
 
 
-class TimeoutHelper:
-    # TODO - ability to return values
-    def __init__(self, seconds: int = 0, error_message: Optional[str] = None) -> None:
-        self.seconds = seconds
-        self.error_message = (
-            error_message
-            or f"Timeout Error! Function took longer than {self.seconds} seconds to "
-            f"execute."
-        )
-        self.alarm: threading.Timer = None
+def variable_duration_fn(duration: int):
+    t0 = time.time()
+    while True:
+        _ = 0
+        if time.time() - t0 > duration:
+            break
+    return True
 
-    @staticmethod
-    def is_unix() -> bool:
-        return platform.system() != "Windows"
 
-    def handle_timeout(
-        self, signum: Optional[signal.Signals] = None, frame: Any = None
-    ) -> None:
-        raise TimeoutError(self.error_message)
+def test_short_fn_with_decorator():
+    @TimeoutHelper.set_timeout(seconds=10)
+    def helper():
+        variable_duration_fn(5)
 
-    def __enter__(self) -> None:
-        if self.is_unix():
-            signal.signal(signal.SIGALRM, self.handle_timeout)
-            signal.alarm(self.seconds)
-        else:
-            self.alarm.start()
+    helper()
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        if self.is_unix():
-            signal.alarm(0)
-        else:
-            self.alarm.cancel()
 
-    @classmethod
-    @decorator.contextmanager
-    def context_timer(cls, seconds: int = 0):
-        handler = cls(seconds)
-        if handler.is_unix():
-            signal.signal(signal.SIGALRM, handler.handle_timeout)
-            signal.alarm(handler.seconds)
-        else:
-            handler.alarm = threading.Timer(seconds, handler.handle_timeout)
-            handler.alarm.start()
-        try:
-            yield
-        finally:
-            if handler.is_unix():
-                signal.alarm(0)
-            else:
-                handler.alarm.cancel()
+def test_long_fn_with_decorator():
+    with pytest.raises(TimeoutError):
 
-    @classmethod
-    def set_timeout(cls, seconds: int) -> Callable:
-        if cls.is_unix():
-            return cls._set_timeout_unix(seconds=seconds)
-        else:
-            return cls._set_timeout_win(seconds=seconds)
+        @TimeoutHelper.set_timeout(seconds=5)
+        def helper():
+            variable_duration_fn(10)
 
-    @classmethod
-    def _set_timeout_unix(cls, seconds: int):
-        def deco(fn: Callable):
-            def wrapper(*args, **kwargs) -> None:
-                with cls(seconds=seconds):
-                    fn(*args, **kwargs)
+        helper()
 
-            return wrapper
 
-        return deco
+def test_long_fn_timeout_zero():
+    with pytest.raises(TimeoutError):
 
-    @classmethod
-    def _set_timeout_win(cls, seconds: int):
-        def deco(fn: Callable):
-            def wrapper(fn: Callable, *args, **kwargs) -> None:
-                handler = cls(seconds=seconds)
-                wrapped_fn = threading.Thread(target=fn, args=args, kwargs=kwargs)
-                wrapped_fn.start()
-                wrapped_fn.join(float(seconds))
+        @TimeoutHelper.set_timeout(seconds=0)
+        def helper():
+            variable_duration_fn(10)
 
-                if wrapped_fn.is_alive():
-                    handler.handle_timeout()
+        helper()
 
-            return decorator.decorator(wrapper, fn)
 
-        return deco
+@pytest.fixture()
+def run_time_duration() -> int:
+    return 20
+
+
+@pytest.fixture()
+def short_run_time_duration() -> int:
+    return 5
+
+
+def test_with_fixture(run_time_duration: int):
+    @TimeoutHelper.set_timeout(10)
+    def helper(run_time_duration: int):
+        variable_duration_fn(run_time_duration)
+
+    with pytest.raises(TimeoutError):
+        helper(run_time_duration)
+
+
+def test_with_fixture_short(short_run_time_duration: int):
+    @TimeoutHelper.set_timeout(10)
+    def helper(short_run_time_duration: int):
+        variable_duration_fn(short_run_time_duration)
+
+    helper(short_run_time_duration)
+
+
+def test_context_manager_long_running():
+    # with TimeoutHelper(3):
+    #     variable_duration_fn(5)
+    with TimeoutHelper.context_timer(3):
+        variable_duration_fn(5)
+
+
+def test_context_manager_short_running():
+    # with TimeoutHelper(5):
+    #     variable_duration_fn(2)
+    with TimeoutHelper.context_timer(5):
+        variable_duration_fn(2)
+
+
+def test_timeout_continues_tests():
+    assert True
+
+
+def test_timeout_continues_tests_again():
+    assert True

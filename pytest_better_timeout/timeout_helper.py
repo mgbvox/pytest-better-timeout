@@ -3,7 +3,7 @@ import signal
 import threading
 from typing import Callable, Optional, Any
 
-import decorator
+import contextlib
 
 
 class TimeoutHelper:
@@ -40,7 +40,7 @@ class TimeoutHelper:
             self.alarm.cancel()
 
     @classmethod
-    @decorator.contextmanager
+    @contextlib.contextmanager
     def context_timer(cls, seconds: int = 0):
         handler = cls(seconds)
         if handler.is_unix():
